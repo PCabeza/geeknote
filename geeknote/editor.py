@@ -52,20 +52,26 @@ class Editor(object):
         '''
         Transforms Evernote checklist elements to github `* [ ]` task list style
         '''
+        transform_tags = ['p','div']
+
         # select cant be used with dashed: https://bugs.launchpad.net/beautifulsoup/+bug/1276211
         for todo in soup.find_all('en-todo'):
             parent = todo.parent
+            transform = parent.find() == todo and parent.name in transform_tags
 
             checked = todo.attrs.get('checked',None) == "true"
             todo.replace_with("[x]" if checked else "[ ]")
 
-            content = ''.join(unicode(child) for child in parent.children
-                if isinstance(child, NavigableString)
-            ).strip()
+            # EN checklist can appear anywhere, but if they appear at the beggining
+            # of a block element, transform it so it ressembles github markdown syntax
+            if transform:
+                content = ''.join(unicode(child) for child in parent.children
+                    if isinstance(child, NavigableString)
+                ).strip()
 
-            tag = soup.new_tag("li")
-            tag.string = content
-            parent.replace_with(tag)
+                new_tag = soup.new_tag("li")
+                new_tag.string = content
+                parent.replace_with(new_tag)
 
 
     @staticmethod
@@ -104,26 +110,44 @@ class Editor(object):
         Transforms github style checklists `* [ ]` in the BeautifulSoup tree to
         enml.
         '''
+
+        check_re = re.compile(r'\[(.)\]')
+        print check_re, soup
+
         for ul in soup.find_all('ul'):
             tasks = []
             istodo = True
             for li in ul.find_all('li'):
                 task = soup.new_tag('div')
-                todo_tag= soup.new_tag('en-todo')
-                task.append(todo_tag)
+                todo_tag = soup.new_tag('en-todo')
 
-                reg = re.match(r'\[(.)\]',li.get_text())
+                reg = check_re.match(li.get_text())
                 istodo = istodo and reg
                 character = reg.group(1) if reg else None
 
                 if character == "x": todo_tag['checked']="true"
-                if reg: task.append(NavigableString(li.get_text()[3:].strip()))
 
+                task.append(todo_tag)
+                if reg: task.append(NavigableString(li.get_text()[3:].strip()))
                 tasks.append(task)
 
-                if istodo:
-                    for task in tasks: ul.insert_after(task)
-                    ul.extract()
+            if istodo:
+                for task in tasks: ul.insert_after(task)
+                ul.extract()
+
+        for todo in soup.find_all(text=check_re):
+            str_re = re.match(r'(.*)\[(.)\](.*)',todo)
+            pre = str_re.group(1)
+            post = str_re.group(3)
+
+            todo_tag = soup.new_tag('en-todo')
+            if str_re.group(2) == "x": todo_tag['checked']="true"
+
+            todo.replace_with(todo_tag)
+            todo_tag.insert_before(pre)
+            todo_tag.insert_after(post)
+
+        print soup
 
     @staticmethod
     def textToENML(content, raise_ex=False, format='markdown'):
@@ -154,6 +178,8 @@ class Editor(object):
               contentHTML = Editor.HTMLEscape(content)
             return Editor.wrapENML(contentHTML)
         except:
+            import traceback
+            traceback.print_exc()
             if raise_ex:
                 raise Exception("Error while parsing text to html."
                                 " Content must be an UTF-8 encode.")
