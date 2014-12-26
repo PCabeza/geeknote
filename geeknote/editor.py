@@ -3,7 +3,7 @@
 import os
 import sys
 import tempfile
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 import threading
 import hashlib
 import html2text as html2text
@@ -54,13 +54,13 @@ class Editor(object):
         '''
         transform_tags = ['p','div']
 
-        # select cant be used with dashed: https://bugs.launchpad.net/beautifulsoup/+bug/1276211
+        # soup.select cant be used with dashes: https://bugs.launchpad.net/beautifulsoup/+bug/1276211
         for todo in soup.find_all('en-todo'):
             parent = todo.parent
             transform = parent.find() == todo and parent.name in transform_tags
 
             checked = todo.attrs.get('checked',None) == "true"
-            todo.replace_with("[x]" if checked else "[ ]")
+            todo.replace_with("[x] " if checked else "[ ] ")
 
             # EN checklist can appear anywhere, but if they appear at the beggining
             # of a block element, transform it so it ressembles github markdown syntax
@@ -111,17 +111,18 @@ class Editor(object):
         enml.
         '''
 
-        check_re = re.compile(r'\[(.)\]')
-        print check_re, soup
+        checktodo_re = re.compile(r'\[(.)\]')
 
+        # To be more github compatible, if in a list all elements begins with `[ ]``
+        # transform it to normal `[ ]` evernote elements
         for ul in soup.find_all('ul'):
-            tasks = []
-            istodo = True
+            tasks = []; istodo = True
+
             for li in ul.find_all('li'):
                 task = soup.new_tag('div')
                 todo_tag = soup.new_tag('en-todo')
 
-                reg = check_re.match(li.get_text())
+                reg = checktodo_re.match(li.get_text())
                 istodo = istodo and reg
                 character = reg.group(1) if reg else None
 
@@ -135,7 +136,8 @@ class Editor(object):
                 for task in tasks: ul.insert_after(task)
                 ul.extract()
 
-        for todo in soup.find_all(text=check_re):
+        # For the rest of elements just replace `[ ]` with the appropriate element
+        for todo in soup.find_all(text=checktodo_re):
             str_re = re.match(r'(.*)\[(.)\](.*)',todo)
             pre = str_re.group(1)
             post = str_re.group(3)
@@ -147,7 +149,6 @@ class Editor(object):
             todo_tag.insert_before(pre)
             todo_tag.insert_after(post)
 
-        print soup
 
     @staticmethod
     def textToENML(content, raise_ex=False, format='markdown'):
